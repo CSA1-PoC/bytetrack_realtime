@@ -9,7 +9,7 @@ from bytetrack_realtime.bytetrack.basetrack import BaseTrack, TrackState
 
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
-    def __init__(self, ltwh, score, det_class):
+    def __init__(self, ltwh, score, det_class, cdata):
 
         # wait activate
         self._ltwh = np.asarray(ltwh, dtype=np.float)
@@ -20,6 +20,8 @@ class STrack(BaseTrack):
         self.score = score
         self.tracklet_len = 0
         self.det_class = det_class
+        self.cdata = cdata
+        self.cdata_list = []
 
     def predict(self):
         mean_state = self.mean.copy()
@@ -53,6 +55,7 @@ class STrack(BaseTrack):
         # self.is_activated = True
         self.frame_id = frame_id
         self.start_frame = frame_id
+        self.cdata_list.append(self.cdata)
 
     def re_activate(self, new_track, frame_id, new_id=False):
         self.mean, self.covariance = self.kalman_filter.update(
@@ -65,6 +68,7 @@ class STrack(BaseTrack):
         if new_id:
             self.track_id = self.next_id()
         self.score = new_track.score
+        self.cdata_list.append(new_track.cdata)
 
     def update(self, new_track, frame_id):
         """
@@ -84,6 +88,7 @@ class STrack(BaseTrack):
         self.is_activated = True
 
         self.score = new_track.score
+        self.cdata_list.append(new_track.cdata)
 
     @property
     # @jit(nopython=True)
@@ -161,8 +166,8 @@ class ByteTracker(object):
         """Update tracker with detections in current frame
 
         Args:
-            detections (List[Tuple[List[float or int], float, str]]):
-                List of detections, each in tuples of ([left,top,w,h], confidence, detection_class)
+            detections (List[Tuple[List[float or int], float, str, object]]):
+                List of detections, each in tuples of ([left,top,w,h], confidence, detection_class, client_data)
 
         Returns:
             STrack: activated tracks
@@ -176,10 +181,11 @@ class ByteTracker(object):
         if not detections:
             return []
 
-        bboxes, scores, det_classes = list(zip(*detections))
+        bboxes, scores, det_classes, cdatas = list(zip(*detections))
         bboxes = np.asarray(bboxes)
         scores = np.asarray(scores)
         det_classes = list(det_classes)
+        cdatas = np.asarray(cdatas, dtype=object)
 
         remain_inds = scores > self.track_thresh
         inds_low = scores > self.min_track_thresh
@@ -192,11 +198,13 @@ class ByteTracker(object):
         scores_second = scores[inds_second]
         classes_keep = list(compress(det_classes, remain_inds))
         classes_second = list(compress(det_classes, inds_second))
+        cdatas_keep = cdatas[remain_inds]
+        cdatas_second = cdatas[inds_second]
 
         if len(dets) > 0:
             '''Detections'''
-            detections = [STrack(ltwh, s, det_class) for
-                          (ltwh, s, det_class) in zip(dets, scores_keep, classes_keep)]
+            detections = [STrack(ltwh, s, det_class, cdata) for
+                          (ltwh, s, det_class, cdata) in zip(dets, scores_keep, classes_keep, cdatas_keep)]
         else:
             detections = []
 
@@ -232,8 +240,8 @@ class ByteTracker(object):
         # association the untrack to the low score detections
         if len(dets_second) > 0:
             '''Detections'''
-            detections_second = [STrack(ltwh, s, det_class) for
-                          (ltwh, s, det_class) in zip(dets_second, scores_second, classes_second)]
+            detections_second = [STrack(ltwh, s, det_class, cdata) for
+                          (ltwh, s, det_class, cdata) in zip(dets_second, scores_second, classes_second, cdatas_second)]
         else:
             detections_second = []
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
